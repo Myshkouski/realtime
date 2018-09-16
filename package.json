@@ -1,0 +1,17 @@
+{
+  "name": "realtime",
+  "version": "0.0.1",
+  "description": "Realtime Framework",
+  "main": "index.js",
+  "author": "Alexei Myshkouski",
+  "dependencies": {
+    "@alexeimyshkouski/pubsub": "0.0.1",
+    "@alexeimyshkouski/realtime-router": "0.0.1",
+    "@alexeimyshkouski/realtime-server": "0.0.1",
+    "debug": "^4.0.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Myshkouski/realtime.git"
+  }
+}
