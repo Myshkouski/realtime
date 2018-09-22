@@ -1,75 +1,79 @@
 const EventEmitter = require('events')
 const RealtimeServer = require('@alexeimyshkouski/realtime-server')
-const RealtimeRouter = require('../realtime-router')
+const RealtimeRouter = require('@alexeimyshkouski/realtime-router')
 const Hub = require('@alexeimyshkouski/pubsub')
 
 const parseMessage = require('./parse-message-json')
 
-const debug = require('debug')('ws-framework')
+const debug = require('debug')('realtime:application')
 
 const eventPath = '(!|/event)/'
 const enterPath = '(\\+|/enter)/'
 const leavePath = '(\\-|/leave)/'
-const roomParam = ':room'
+const modifyPath = '(.+)/'
+
+const roomParamString = ':room'
+
+function enter(room) {
+  const ctx = this
+
+  if (!ctx.rooms.has(room)) {
+    const token = ctx.app.hub.subscribe(room, function subscriber(payload) {
+      ctx.send(['!/' + room, payload])
+    })
+
+    if (token) {
+      debug('entering room "%s"', room)
+
+      ctx.rooms.set(token.channel, token)
+
+      return true
+    }
+  }
+
+  return false
+}
+
+function leave(room) {
+  const ctx = this
+
+  if (ctx.rooms.has(room)) {
+    debug('leaving room "%s"', room)
+
+    const token = ctx.rooms.get(room)
+
+    token.unsubscribe()
+
+    ctx.rooms.delete(room)
+
+    return true
+  }
+
+  return false
+}
 
 const contextProto = {
   get rooms() {
     return this.app.rooms.get(this.socket)
   },
-
-  enter(room) {
-    const ctx = this
-
-    if (!ctx.rooms.has(room)) {
-      const token = ctx.app.hub.subscribe(room, function subscriber(payload) {
-        ctx.send({
-          scope: '/event/' + room,
-          payload
-        })
-      })
-
-      if (token) {
-        debug('entering room "%s"', room)
-
-        ctx.rooms.set(token.channel, token)
-
-        return true
-      }
-    }
-
-    return false
-  },
-
-  leave(room) {
-    const ctx = this
-
-    if (ctx.rooms.has(room)) {
-      debug('leaving room "%s"', room)
-
-      const token = ctx.rooms.get(room)
-
-      token.unsubscribe()
-
-      ctx.rooms.delete(room)
-
-      return true
-    }
-
-    return false
-  }
+  enter,
+  leave
 }
 
 const contextProtoOwnPropertyDescriptors = Object.getOwnPropertyDescriptors(contextProto)
+
+function modifyContext(ctx, next) {
+  Object.defineProperties(ctx, contextProtoOwnPropertyDescriptors)
+  ctx.room = Hub.normalizeName(ctx.params.room)
+  return next()
+}
 
 async function onEnter(ctx, next) {
   await next()
 
   const entered = ctx.enter(ctx.room)
 
-  const message = {
-    scope: ctx.originalScope,
-    payload: entered
-  }
+  const message = [ctx.originalScope, entered]
 
   ctx.send(message)
 }
@@ -79,10 +83,7 @@ async function onLeave(ctx, next) {
 
   const left = ctx.leave(ctx.room)
 
-  const message = {
-    scope: ctx.originalScope,
-    payload: left
-  }
+  const message = [ctx.originalScope, left]
 
   ctx.send(message)
 }
@@ -97,7 +98,7 @@ async function onEvent(ctx, next) {
   }
 }
 
-class Framework extends EventEmitter {
+class Realtime extends EventEmitter {
   constructor() {
     super()
 
@@ -115,7 +116,6 @@ class Framework extends EventEmitter {
           ctx.app.rooms.set(ctx.socket, new Map())
 
           ctx.socket.once('close', () => {
-            debug('socket closed', ctx.socket.address().address)
             const rooms = ctx.app.rooms.get(ctx.socket)
 
             for (const token of rooms.values()) {
@@ -123,6 +123,8 @@ class Framework extends EventEmitter {
             }
 
             ctx.app.rooms.delete(ctx.socket)
+
+            debug('socket closed', ctx.socket.address())
           })
         }
       })
@@ -130,18 +132,10 @@ class Framework extends EventEmitter {
 
     router
       .message(parseMessage())
-      .message((ctx, next) => {
-        Object.defineProperties(ctx, contextProtoOwnPropertyDescriptors)
-
-        return next()
-      })
-      .message(':action/:room', (ctx, next) => {
-        ctx.room = Hub.normalizeName(ctx.params.room)
-        return next()
-      })
-      .message(enterPath + roomParam, onEnter)
-      .message(leavePath + roomParam, onLeave)
-      .message(eventPath + roomParam, onEvent.bind(this))
+      .message(modifyPath + roomParamString, modifyContext)
+      .message(enterPath + roomParamString, onEnter)
+      .message(leavePath + roomParamString, onLeave)
+      .message(eventPath + roomParamString, onEvent.bind(this))
 
     const hub = new Hub({
       separator: '/'
@@ -176,4 +170,4 @@ class Framework extends EventEmitter {
   }
 }
 
-module.exports = Framework
+module.exports = Realtime

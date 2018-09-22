@@ -1,4 +1,4 @@
-const debug = require('debug')('parse-message-array')
+const debug = require('debug')('realtime:parse-message')
 
 function deserialize(ctx, next) {
   let {
@@ -37,6 +37,7 @@ function deserialize(ctx, next) {
 module.exports = options => {
   return function (ctx, next) {
     ctx.deserialize = deserialize
+
     return deserialize(ctx, next)
   }
 }
