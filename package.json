@@ -1,13 +1,13 @@
 {
   "name": "@alexeimyshkouski/realtime",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "description": "Realtime Framework",
   "main": "index.js",
   "author": "Alexei Myshkouski",
   "dependencies": {
-    "@alexeimyshkouski/pubsub": "0.0.1",
-    "@alexeimyshkouski/realtime-router": "0.0.1",
-    "@alexeimyshkouski/realtime-server": "0.0.1",
+    "@alexeimyshkouski/pubsub": "latest",
+    "@alexeimyshkouski/realtime-router": "latest",
+    "@alexeimyshkouski/realtime-server": "latest",
     "debug": "^4.0.1"
   },
   "repository": {

@@ -1,36 +1,79 @@
 const EventEmitter = require('events')
-const WsApp = require('@alexeimyshkouski/realtime-server')
-const WsRouter = require('@alexeimyshkouski/realtime-router')
+const RealtimeServer = require('@alexeimyshkouski/realtime-server')
+const RealtimeRouter = require('@alexeimyshkouski/realtime-router')
 const Hub = require('@alexeimyshkouski/pubsub')
 
 const parseMessage = require('./parse-message-json')
 
-const debug = require('debug')('ws-framework')
+const debug = require('debug')('realtime:application')
+
+const eventPath = '(!|/event)/'
+const enterPath = '(\\+|/enter)/'
+const leavePath = '(\\-|/leave)/'
+const modifyPath = '(.+)/'
+
+const roomParamString = ':room'
+
+function enter(room) {
+  const ctx = this
+
+  if (!ctx.rooms.has(room)) {
+    const token = ctx.app.hub.subscribe(room, function subscriber(payload) {
+      ctx.send(['!/' + room, payload])
+    })
+
+    if (token) {
+      debug('entering room "%s"', room)
+
+      ctx.rooms.set(token.channel, token)
+
+      return true
+    }
+  }
+
+  return false
+}
+
+function leave(room) {
+  const ctx = this
+
+  if (ctx.rooms.has(room)) {
+    debug('leaving room "%s"', room)
+
+    const token = ctx.rooms.get(room)
+
+    token.unsubscribe()
+
+    ctx.rooms.delete(room)
+
+    return true
+  }
+
+  return false
+}
+
+const contextProto = {
+  get rooms() {
+    return this.app.rooms.get(this.socket)
+  },
+  enter,
+  leave
+}
+
+const contextProtoOwnPropertyDescriptors = Object.getOwnPropertyDescriptors(contextProto)
+
+function modifyContext(ctx, next) {
+  Object.defineProperties(ctx, contextProtoOwnPropertyDescriptors)
+  ctx.room = Hub.normalizeName(ctx.params.room)
+  return next()
+}
 
 async function onEnter(ctx, next) {
   await next()
 
-  const room = Hub.normalizeName(ctx.params.room)
+  const entered = ctx.enter(ctx.room)
 
-  const message = {
-    scope: ctx.originalScope,
-    payload: false
-  }
-
-  if (!ctx.rooms.has(room)) {
-    const token = ctx.app.hub.subscribe(room, function subscriber(payload) {
-      ctx.send({
-        scope: '/event/' + room,
-        payload
-      })
-    })
-
-    if (token) {
-      ctx.rooms.set(token.channel, token)
-
-      message.payload = true
-    }
-  }
+  const message = [ctx.originalScope, entered]
 
   ctx.send(message)
 }
@@ -38,28 +81,15 @@ async function onEnter(ctx, next) {
 async function onLeave(ctx, next) {
   await next()
 
-  const room = Hub.normalizeName(ctx.params.room)
+  const left = ctx.leave(ctx.room)
 
-  const message = {
-    scope: ctx.originalScope,
-    payload: false
-  }
-
-  if (ctx.rooms.has(room)) {
-    const token = ctx.rooms.get(room)
-
-    token.unsubscribe()
-
-    ctx.rooms.delete(room)
-
-    message.payload = true
-  }
+  const message = [ctx.originalScope, left]
 
   ctx.send(message)
 }
 
 async function onEvent(ctx, next) {
-  if (ctx.rooms.has(ctx.params.room)) {
+  if (ctx.rooms.has(ctx.room)) {
     debug('message in "%s" from "%s"', ctx.params.room, ctx.socket.address().address)
 
     await next()
@@ -68,14 +98,14 @@ async function onEvent(ctx, next) {
   }
 }
 
-class Framework extends EventEmitter {
+class Realtime extends EventEmitter {
   constructor() {
     super()
 
-    const app = new WsApp()
+    const app = new RealtimeServer()
     this._app = app
 
-    const router = new WsRouter()
+    const router = new RealtimeRouter()
     this._router = router
 
     app
@@ -86,7 +116,6 @@ class Framework extends EventEmitter {
           ctx.app.rooms.set(ctx.socket, new Map())
 
           ctx.socket.once('close', () => {
-            debug('socket closed', ctx.socket.address().address)
             const rooms = ctx.app.rooms.get(ctx.socket)
 
             for (const token of rooms.values()) {
@@ -94,6 +123,8 @@ class Framework extends EventEmitter {
             }
 
             ctx.app.rooms.delete(ctx.socket)
+
+            debug('socket closed', ctx.socket.address())
           })
         }
       })
@@ -101,18 +132,10 @@ class Framework extends EventEmitter {
 
     router
       .message(parseMessage())
-      .message((ctx, next) => {
-        Object.assign(ctx, {
-          get rooms() {
-            return ctx.app.rooms.get(ctx.socket)
-          }
-        })
-
-        return next()
-      })
-      .message('(\\+|/enter)/:room', onEnter)
-      .message('(\\-|/leave)/:room', onLeave)
-      .message('(\\!|/event)/:room', onEvent.bind(this))
+      .message(modifyPath + roomParamString, modifyContext)
+      .message(enterPath + roomParamString, onEnter)
+      .message(leavePath + roomParamString, onLeave)
+      .message(eventPath + roomParamString, onEvent.bind(this))
 
     const hub = new Hub({
       separator: '/'
@@ -130,9 +153,21 @@ class Framework extends EventEmitter {
     return this._app.conencted
   }
 
+  enter(room, fn) {
+    this._router.message(enterPath + room, fn)
+
+    return this
+  }
+
+  leave(room, fn) {
+    this._router.message(leavePath + room, fn)
+
+    return this
+  }
+
   callback() {
     return this._app.callback()
   }
 }
 
-module.exports = Framework
+module.exports = Realtime
